@@ -6,7 +6,7 @@ import time
 HEALTH_STATUS = {0: "Good", 1: "Warning", 2: "Error"}
 
 TIMEOUT = 0.1
-
+SCAN_TIMEOUT = 2
 
 class RDState(Enum):
     WAIT_RDSTART1 = 0
@@ -20,6 +20,7 @@ class ResponseCode(Enum):
     HEALTH = 0x06
     SAMPLE_RATE = 0x15
     CONF = 0x20
+    SCAN = 0x81
 
 
 class Request(Enum):
@@ -44,7 +45,6 @@ class LidarConfType(Enum):
 
 
 class A1M8:
-
     REQUEST_START_FLAG = 0XA5
     RDSTART_FLAG1 = 0xA5
     RDSTART_FLAG2 = 0x5A
@@ -69,7 +69,7 @@ class A1M8:
             packet += struct.pack("<B", len(payload)) + payload
             chk = self.check(packet)
             packet += struct.pack("<B", chk)
-        #print(packet.hex())
+        # print(packet.hex())
         self.serial.write(packet)
 
     def receive_response_descriptor(self):
@@ -118,9 +118,8 @@ class A1M8:
             return model, firmware_major, firmware_minor, hardware, serial_nb
 
         def process_sample_rate(data):
-            print(data)
             sr_std, sr_express = struct.unpack("<HH", data)
-            print(f"sample rate standard: {sr_std}, express:{sr_express}")
+            return sr_std, sr_express
 
         def process_health(data):
             status, error_code = struct.unpack("<BH", data)
@@ -161,20 +160,61 @@ class A1M8:
         else:
             raise Exception(f"Unknow data type {data_type}")
 
+    def receive_multiple_responses(self, lenght, data_type):
+        def process_scan(data):
+            s = data[0] & 0b1
+            sb = (data[0] >> 1) & 0b01
+            assert s != sb
+            quality = data[0] >> 2
+            assert data[1] & 0b01 == 1
+            angle = ((data[1] >> 1) | (data[2] << 7)) / 64
+            distance = (data[3] | (data[4] << 8)) / 4
+            return angle, quality, distance
+
+
+        # start scan delay
+        last_data_time = time.time()
+        if data_type == ResponseCode.SCAN.value:
+            while self.serial.in_waiting < lenght:
+                if time.time() - last_data_time > SCAN_TIMEOUT:
+                    raise TimeoutError("scan did not respond!")
+        while True:
+            buffer = self.serial.read(lenght)
+            if len(buffer) != lenght:
+                print(f"len: {len(buffer)}")
+                if time.time() - last_data_time > SCAN_TIMEOUT:
+                    raise TimeoutError("scan timeout!")
+            else:
+                last_data_time = time.time()
+                #assert len(buffer) == lenght
+                if data_type == ResponseCode.SCAN.value:
+                    yield process_scan(buffer)
+
     def send_stop(self):
         lidar.send(Request.STOP)
         time.sleep(0.002)
 
     def send_reset(self):
         lidar.send(Request.RESET)
-        time.sleep(0.002)
+        time.sleep(0.01)
+        self.serial.reset_input_buffer()
+        self.serial.timeout = 1
+        msg1 = self.serial.readline().decode().strip()
+        msg2 = self.serial.readline().decode().strip()
+        msg3 = self.serial.readline().decode().strip()
+        self.serial.timeout = TIMEOUT
+        return msg1, msg2, msg3
 
-    def get_health(self):
-        lidar.send(Request.GET_HEALTH)
+    def start_scan(self):
+        lidar.send(Request.SCAN)
         response_length, mode, data_type = lidar.receive_response_descriptor()
-        status, error_code = self.receive_single_response(response_length, data_type)
-        status_str = HEALTH_STATUS.get(status, "Unknown status!")
-        print(f"status: {status_str}, error: {error_code}")
+        return self.receive_multiple_responses(response_length, data_type)
+
+    def start_express_scan(self):
+        pass
+
+    def force_scan(self):
+        pass
 
     def get_info(self):
         lidar.send(Request.GET_INFO)
@@ -183,24 +223,38 @@ class A1M8:
         model, firmware_major, firmware_minor, hardware, serial_nb = ret
         print(f"model:{model}, fw:{firmware_major}.{firmware_minor}, hw:{hardware} SN:{serial_nb}")
 
+    def get_health(self):
+        lidar.send(Request.GET_HEALTH)
+        response_length, mode, data_type = lidar.receive_response_descriptor()
+        status, error_code = self.receive_single_response(response_length, data_type)
+        status_str = HEALTH_STATUS.get(status, "Unknown status!")
+        print(f"status: {status_str}, error: {error_code}")
+
+    def get_sample_rate(self):
+        lidar.send(Request.GET_SAMPLERATE)
+        response_length, mode, data_type = lidar.receive_response_descriptor()
+        t_std, t_express = self.receive_single_response(response_length, data_type)
+        print(f"t_std: {t_std}, t_express: {t_express}")
+
     def get_lidar_conf(self, query: LidarConfType, param=None):
         tx_payload = struct.pack("<I", query.value)
         if param is not None:
             tx_payload += struct.pack("<H", param)
-        lidar.send(Request.GET_LIDAR_CONF, tx_payload)
+        self.send(Request.GET_LIDAR_CONF, tx_payload)
         length, mode, data_type = lidar.receive_response_descriptor()
-        conf = lidar.receive_single_response(length, data_type)
+        conf = self.receive_single_response(length, data_type)
         return conf
-
 
 
 if __name__ == "__main__":
     try:
         lidar = A1M8("/dev/ttyUSB0")
-        #lidar.get_health()
-        #lidar.get_info()
-        #time.sleep(2)
-        #lidar.get_health()
+        msgs = lidar.send_reset()
+        print(msgs)
+        # lidar.get_health()
+        # lidar.get_info()
+        # time.sleep(2)
+        # lidar.get_health()
 
         nb_modes = lidar.get_lidar_conf(LidarConfType.RP_LIDAR_SCAN_MODE_COUNT)
         for i in range(nb_modes):
@@ -210,9 +264,17 @@ if __name__ == "__main__":
             ans_type = lidar.get_lidar_conf(LidarConfType.RP_LIDAR_SCAN_MODE_ANS_TYPE, i)
             print(f"{name}: {us_per_sample}us, {max_dist}m, {hex(ans_type)}")
 
-        time.sleep(0.1)
-        #lidar.send(Request.SCAN)
-        #while True:
+        # for i in range(100):
+        #     lidar.get_sample_rate()
+        #     time.sleep(0.5)
+
+        for angle, quality, distance in lidar.start_scan():
+            if distance != 0:
+                print(f"angle: {angle}, quality: {quality}, distance:{distance}")
+
+        #time.sleep(0.1)
+        # lidar.send(Request.SCAN)
+        # while True:
         #    time.sleep(1)
     finally:
         lidar.stop()
