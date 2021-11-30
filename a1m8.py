@@ -169,7 +169,7 @@ class A1M8:
             assert data[1] & 0b01 == 1
             angle = ((data[1] >> 1) | (data[2] << 7)) / 64
             distance = (data[3] | (data[4] << 8)) / 4
-            return angle, quality, distance
+            return angle, quality, distance, s
 
 
         # start scan delay
@@ -191,11 +191,11 @@ class A1M8:
                     yield process_scan(buffer)
 
     def send_stop(self):
-        lidar.send(Request.STOP)
+        self.send(Request.STOP)
         time.sleep(0.002)
 
     def send_reset(self):
-        lidar.send(Request.RESET)
+        self.send(Request.RESET)
         time.sleep(0.01)
         self.serial.reset_input_buffer()
         self.serial.timeout = 1
@@ -206,8 +206,8 @@ class A1M8:
         return msg1, msg2, msg3
 
     def start_scan(self):
-        lidar.send(Request.SCAN)
-        response_length, mode, data_type = lidar.receive_response_descriptor()
+        self.send(Request.SCAN)
+        response_length, mode, data_type = self.receive_response_descriptor()
         return self.receive_multiple_responses(response_length, data_type)
 
     def start_express_scan(self):
@@ -217,22 +217,22 @@ class A1M8:
         pass
 
     def get_info(self):
-        lidar.send(Request.GET_INFO)
-        response_length, mode, data_type = lidar.receive_response_descriptor()
+        self.send(Request.GET_INFO)
+        response_length, mode, data_type = self.receive_response_descriptor()
         ret = self.receive_single_response(response_length, data_type)
         model, firmware_major, firmware_minor, hardware, serial_nb = ret
         print(f"model:{model}, fw:{firmware_major}.{firmware_minor}, hw:{hardware} SN:{serial_nb}")
 
     def get_health(self):
-        lidar.send(Request.GET_HEALTH)
-        response_length, mode, data_type = lidar.receive_response_descriptor()
+        self.send(Request.GET_HEALTH)
+        response_length, mode, data_type = self.receive_response_descriptor()
         status, error_code = self.receive_single_response(response_length, data_type)
         status_str = HEALTH_STATUS.get(status, "Unknown status!")
         print(f"status: {status_str}, error: {error_code}")
 
     def get_sample_rate(self):
-        lidar.send(Request.GET_SAMPLERATE)
-        response_length, mode, data_type = lidar.receive_response_descriptor()
+        self.send(Request.GET_SAMPLERATE)
+        response_length, mode, data_type = self.receive_response_descriptor()
         t_std, t_express = self.receive_single_response(response_length, data_type)
         print(f"t_std: {t_std}, t_express: {t_express}")
 
@@ -241,7 +241,7 @@ class A1M8:
         if param is not None:
             tx_payload += struct.pack("<H", param)
         self.send(Request.GET_LIDAR_CONF, tx_payload)
-        length, mode, data_type = lidar.receive_response_descriptor()
+        length, mode, data_type = self.receive_response_descriptor()
         conf = self.receive_single_response(length, data_type)
         return conf
 
@@ -268,7 +268,7 @@ if __name__ == "__main__":
         #     lidar.get_sample_rate()
         #     time.sleep(0.5)
 
-        for angle, quality, distance in lidar.start_scan():
+        for angle, quality, distance, s in lidar.start_scan():
             if distance != 0:
                 print(f"angle: {angle}, quality: {quality}, distance:{distance}")
 
