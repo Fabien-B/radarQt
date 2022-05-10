@@ -9,6 +9,9 @@ Launch it with `./radarqt.py /dev/ttyUSB0`.
 
 You can test lidar without GUI: `./ld06.py /dev/ttyUSB0`.
 
+![Screenshot](screenshot.png)
+
+
 TODO:
 
 + Select lidar with command line argument (not by editing the code)
