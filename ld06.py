@@ -1,7 +1,9 @@
+#!/usr/bin/python3
 import serial
 from enum import Enum
 import struct
 import time
+import sys
 
 
 class RcvState(Enum):
@@ -56,3 +58,9 @@ class LD06:
                     yield angle, quality, dist, s
                 self.last_end_angle = end_angle
 
+if __name__ == "__main__":
+    lidar = LD06(sys.argv[1])
+    for angle, quality, distance, s in lidar.start_scan():
+        print(f"{angle:.1f}: {distance}")
+        if s:
+            print("---------------")
