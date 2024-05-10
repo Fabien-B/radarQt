@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 from PyQt5 import QtCore, QtWidgets, QtGui
 import time
 import math
@@ -6,6 +6,7 @@ import sys
 import a1m8
 import xv11
 import ld06
+import ecalrcv
 import sys
 
 
@@ -17,7 +18,8 @@ class LidarHandler(QtCore.QThread):
         QtCore.QThread.__init__(self, parent)
         #self.lidar = a1m8.A1M8("/dev/ttyUSB0")
         #self.lidar = xv11.XV11("/dev/ttyUSB0")
-        self.lidar = ld06.LD06(sys.argv[1])
+        #self.lidar = ld06.LD06(sys.argv[1])
+        self.lidar = ecalrcv.Ecal()
 
     def run(self):
         #msgs = self.lidar.send_reset()
